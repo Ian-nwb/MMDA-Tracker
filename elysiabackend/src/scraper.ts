@@ -17,6 +17,39 @@ let cachedAlerts: RawTrafficAlert[] = []
 let isFetching = false
 let scraperInterval: any = null
 
+// ---------------------------------------------------------------------------
+// FIX 1: Nitter mirror cascade — tries each in order, uses the first that works
+// ---------------------------------------------------------------------------
+const MMDA_RSS_MIRRORS = [
+  'https://rsshub.app/twitter/user/MMDA',   // RSSHub — most reliable, actively maintained
+  'https://nitter.net/MMDA/rss',             // nitter.net — primary fallback
+  'https://nitter.cz/MMDA/rss',             // Czech mirror — secondary fallback
+  'https://nitter.privacydev.net/MMDA/rss', // Original (kept last, most unstable)
+]
+
+// ---------------------------------------------------------------------------
+// FIX 2: Waze public bounding-box endpoint — the real public-facing API
+// ---------------------------------------------------------------------------
+const WAZE_LIVE_URL = 'https://www.waze.com/row-rtserver/web/TGeoRSS'
+
+// Bounding box covers Metro Manila and surrounding arterials
+const WAZE_PARAMS = {
+  bottom: '14.35',
+  top: '14.75',
+  left: '120.95',
+  right: '121.15',
+  ma: 200,   // max alerts
+  mj: 200,   // max jams
+  mu: 200,   // max user reports
+  types: 'alerts,traffic',
+}
+
+const WAZE_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Referer': 'https://www.waze.com/live-map',
+  'Accept': 'application/json, text/plain, */*',
+}
+
 /**
  * Returns the current cached traffic alerts instantly.
  * Falls back to an immediate scraping sequence if the cache is empty.
@@ -68,74 +101,143 @@ export async function updateAlertsCache() {
 }
 
 /**
- * Core scraping orchestrator: queries Waze and RSS mirrors, falling back to dynamic generation.
+ * Core scraping orchestrator: queries Waze bounding-box API and RSS mirrors,
+ * falling back to dynamic generation if both external services return nothing.
  */
 async function scrapeAlerts(): Promise<RawTrafficAlert[]> {
   const aggregatedAlerts: RawTrafficAlert[] = []
 
-  // 1. WAZE REAL-TIME GPS LAYER
+  // -------------------------------------------------------------------------
+  // SOURCE 1: WAZE PUBLIC LIVE-MAP BOUNDING BOX API
+  // Uses the same endpoint as the Waze browser client — no auth required.
+  // -------------------------------------------------------------------------
   try {
-    const wazeResponse = await axios.get(
-      'https://www.waze.com/rtapi/web/getFeed?fech_id=manila_traffic',
-      {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        timeout: 4000
-      }
-    )
-    const incidents = wazeResponse.data.incidents || []
-    
-    incidents.forEach((incident: any, index: number) => {
-      const street = incident.location?.name || incident.street || 'EDSA'
-      const desc = incident.description || 'Heavy volume of moving vehicles monitored.'
+    const wazeResponse = await axios.get(WAZE_LIVE_URL, {
+      params: WAZE_PARAMS,
+      headers: WAZE_HEADERS,
+      timeout: 6000,
+    })
+
+    const alerts: any[] = wazeResponse.data?.alerts || []
+    const jams: any[] = wazeResponse.data?.jams || []
+
+    // Map alert incidents (accidents, hazards, closures)
+    alerts.forEach((alert: any) => {
+      const description = alert.reportDescription || alert.subtype || 'Traffic incident reported.'
+      const street = alert.street || alert.city || 'Metro Manila'
+
       aggregatedAlerts.push({
-        id: `waze-${incident.id || index}-${Date.now()}`,
+        id: `waze-alert-${alert.uuid || Math.random()}`,
         location: `📍 Waze: ${street}`,
-        message: desc,
-        status: detectSeverity(desc, incident.severity),
-        timeAgo: 'Live GPS',
-        timestamp: new Date().toISOString()
+        message: description,
+        status: detectSeverity(description, alert.severity ?? 0),
+        timeAgo: formatTimeLabel(new Date(alert.pubMillis).toISOString()),
+        timestamp: new Date(alert.pubMillis).toISOString(),
       })
     })
-  } catch (e) {
-    console.log('⚠️ [Scraper] Waze stream offline or timed out.')
+
+    // Map traffic jams (slowdowns, congestion segments)
+    jams.forEach((jam: any, index: number) => {
+      const street = jam.street || jam.city || 'Metro Manila'
+      const speedKmh = jam.speedKMH ? `${jam.speedKMH.toFixed(0)} km/h` : 'slow speed'
+      const delay = jam.delay ? `${Math.round(jam.delay / 60)} min delay` : ''
+
+      aggregatedAlerts.push({
+        id: `waze-jam-${index}-${Date.now()}`,
+        location: `📍 Waze: ${street}`,
+        message: `Traffic jam — ${speedKmh}${delay ? `, ${delay}` : ''}. ${jam.causeAlert ? `Cause: ${jam.causeAlert}.` : ''}`.trim(),
+        status: detectSeverity('', jam.level ?? 0),  // jam.level is 0–5
+        timeAgo: 'Live GPS',
+        timestamp: new Date().toISOString(),
+      })
+    })
+
+    if (alerts.length > 0 || jams.length > 0) {
+      console.log(`✅ [Scraper] Waze: ${alerts.length} alerts, ${jams.length} jam segments`)
+    }
+  } catch (e: any) {
+    // Log the actual HTTP error or timeout reason for easier debugging
+    const reason = e?.response?.status
+      ? `HTTP ${e.response.status}`
+      : e?.code === 'ECONNABORTED'
+      ? 'Timed out'
+      : 'Unreachable'
+    console.warn(`⚠️ [Scraper] Waze stream failed (${reason}) — skipping.`)
   }
 
-  // 2. MMDA OFFICIAL X TIMELINE (RSS proxy)
-  try {
-    const xFeed = await rssParser.parseURL('https://nitter.privacydev.net/MMDA/rss')
+  // -------------------------------------------------------------------------
+  // SOURCE 2: MMDA OFFICIAL X/TWITTER FEED via RSS mirror cascade
+  // Tries each mirror URL in order, uses the first that returns items.
+  // -------------------------------------------------------------------------
+  const mmdaFeed = await fetchMMDAFeedWithFallback()
+
+  if (mmdaFeed) {
     const todayString = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' })
 
-    xFeed.items.forEach((item) => {
+    mmdaFeed.items.forEach((item) => {
       if (!item.pubDate) return
-      const postDateString = new Date(item.pubDate).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' })
-      
-      // Filter for posts from today
+
+      const postDateString = new Date(item.pubDate).toLocaleDateString('en-CA', {
+        timeZone: 'Asia/Manila',
+      })
+
+      // Only include posts from today (Manila time)
       if (postDateString !== todayString) return
 
       const cleanContent = item.contentSnippet || item.title || ''
+      if (!cleanContent.trim()) return
+
       aggregatedAlerts.push({
         id: `x-${item.guid || Math.random()}`,
         location: extractLocation(cleanContent) || '🐦 X: MMDA Official Update',
         message: cleanContent,
         status: detectSeverity(cleanContent, 3),
         timeAgo: formatTimeLabel(item.pubDate),
-        timestamp: new Date(item.pubDate).toISOString()
+        timestamp: new Date(item.pubDate).toISOString(),
       })
     })
-  } catch (e) {
-    console.log('⚠️ [Scraper] MMDA X Timeline RSS mirror offline.')
   }
 
-  // 3. FALLBACK TO REAL-TIME DYNAMIC MOCK GENERATOR IF EXTERNAL SERVICES FARED EMPTY
+  // -------------------------------------------------------------------------
+  // SOURCE 3: FALLBACK — dynamic local mock generator
+  // Only triggers if both live sources returned nothing.
+  // -------------------------------------------------------------------------
   if (aggregatedAlerts.length === 0) {
+    console.log('[Scraper] All external sources empty — using dynamic local fallback.')
     return getDynamicLocalAlerts()
   }
 
   // Sort chronologically (newest first)
-  return aggregatedAlerts.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+  return aggregatedAlerts.sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  )
 }
 
+// ---------------------------------------------------------------------------
+// FIX 3: Mirror cascade helper — iterates MMDA_RSS_MIRRORS until one works
+// ---------------------------------------------------------------------------
+async function fetchMMDAFeedWithFallback() {
+  for (const url of MMDA_RSS_MIRRORS) {
+    try {
+      const feed = await rssParser.parseURL(url)
+      if (feed.items && feed.items.length > 0) {
+        console.log(`✅ [Scraper] MMDA RSS feed loaded from: ${url}`)
+        return feed
+      }
+      console.log(`⚠️ [Scraper] Mirror returned 0 items: ${url}`)
+    } catch (e: any) {
+      console.warn(`⚠️ [Scraper] Mirror failed (${url}): ${e?.message ?? 'Unknown error'}`)
+    }
+  }
+
+  console.error('❌ [Scraper] All MMDA RSS mirrors exhausted — no feed available.')
+  return null
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
+// ---------------------------------------------------------------------------
+
 function formatTimeLabel(pubDateString: string): string {
   try {
     const minutesAgo = Math.floor((Date.now() - new Date(pubDateString).getTime()) / 60000)
@@ -149,7 +251,10 @@ function formatTimeLabel(pubDateString: string): string {
 }
 
 function extractLocation(text: string): string | null {
-  const roads = ['EDSA', 'C5', 'COMMONWEALTH', 'ROXAS BLVD', 'ESPANA', 'AURORA BLVD', 'TAFT', 'ORTIGAS', 'KATIPUNAN']
+  const roads = [
+    'EDSA', 'C5', 'COMMONWEALTH', 'ROXAS BLVD', 'ESPANA',
+    'AURORA BLVD', 'TAFT', 'ORTIGAS', 'KATIPUNAN',
+  ]
   for (const road of roads) {
     if (text.toUpperCase().includes(road)) {
       return `🔴 MMDA: ${road}`
@@ -158,20 +263,25 @@ function extractLocation(text: string): string | null {
   return null
 }
 
+/**
+ * Unified severity detector — handles both text keywords and numeric scales.
+ * Waze alerts use a 0–10 severity; Waze jams use a 0–5 level.
+ */
 function detectSeverity(text: string, scale: number): 'Heavy' | 'Moderate' | 'Light' | 'Flooded' {
   const lower = text.toLowerCase()
   if (lower.includes('flood') || lower.includes('baha') || lower.includes('gutter')) return 'Flooded'
   if (lower.includes('heavy') || lower.includes('stalled') || lower.includes('accident') || scale >= 4) return 'Heavy'
-  if (lower.includes('moderate') || lower.includes('slow moving')) return 'Moderate'
+  if (lower.includes('moderate') || lower.includes('slow') || scale >= 2) return 'Moderate'
   return 'Light'
 }
 
 function getDynamicLocalAlerts(): RawTrafficAlert[] {
   const now = Date.now()
   const currentHour = new Date().getHours()
-  const rushHourContext = (currentHour >= 7 && currentHour <= 10) || (currentHour >= 16 && currentHour <= 20)
-    ? 'Peak rush hour volume monitored across all arterial lanes.'
-    : 'Late-night standard moving conditions.'
+  const rushHourContext =
+    (currentHour >= 7 && currentHour <= 10) || (currentHour >= 16 && currentHour <= 20)
+      ? 'Peak rush hour volume monitored across all arterial lanes.'
+      : 'Late-night standard moving conditions.'
 
   return [
     {
@@ -180,7 +290,7 @@ function getDynamicLocalAlerts(): RawTrafficAlert[] {
       message: `Traffic Update: Heavy moving conditions at the underpass. ${rushHourContext} MMDA bike patrols on site adjusting signal timings.`,
       status: 'Heavy',
       timeAgo: 'Just now',
-      timestamp: new Date(now).toISOString()
+      timestamp: new Date(now).toISOString(),
     },
     {
       id: `dynamic-02-${now}`,
@@ -188,7 +298,7 @@ function getDynamicLocalAlerts(): RawTrafficAlert[] {
       message: 'Gutter-deep flooding clearing up near the service road intersections. Vehicles are regaining standard speeds.',
       status: 'Moderate',
       timeAgo: '14m ago',
-      timestamp: new Date(now - 14 * 60000).toISOString()
+      timestamp: new Date(now - 14 * 60000).toISOString(),
     },
     {
       id: `dynamic-03-${now}`,
@@ -196,7 +306,7 @@ function getDynamicLocalAlerts(): RawTrafficAlert[] {
       message: 'Cleared: The minor multivehicle scraping accident on the flyover approach has been completely moved over by towing services.',
       status: 'Light',
       timeAgo: '32m ago',
-      timestamp: new Date(now - 32 * 60000).toISOString()
+      timestamp: new Date(now - 32 * 60000).toISOString(),
     },
     {
       id: `dynamic-04-${now}`,
@@ -204,7 +314,7 @@ function getDynamicLocalAlerts(): RawTrafficAlert[] {
       message: 'Free-flowing moving speeds recorded. Slower flow restricted exclusively to public utility vehicle loading bays.',
       status: 'Light',
       timeAgo: '1h ago',
-      timestamp: new Date(now - 65 * 60000).toISOString()
-    }
+      timestamp: new Date(now - 65 * 60000).toISOString(),
+    },
   ]
 }
