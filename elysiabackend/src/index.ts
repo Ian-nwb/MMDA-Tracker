@@ -1,7 +1,10 @@
 import { Elysia, t } from 'elysia'
 import { cors } from '@elysiajs/cors'
 import { TrafficAlertSchema } from './models'
-import { fetchLiveMMDAAlerts } from './scraper'
+import { fetchLiveMMDAAlerts, startAlertsScraper } from './scraper'
+
+// Start the live background scraper polling every 5 seconds
+startAlertsScraper(5000)
 
 const app = new Elysia()
   // 🔓 Upgraded CORS configuration specifically for browser/web clients
