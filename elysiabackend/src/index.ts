@@ -4,18 +4,19 @@ import { TrafficAlertSchema } from './models'
 import { fetchLiveMMDAAlerts } from './scraper'
 
 const app = new Elysia()
+  // 🔓 Upgraded CORS configuration specifically for browser/web clients
   .use(cors({
-    origin: '*',
-    methods: ['GET']
+    origin: true, // Auto-reflects the request origin back to the browser
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+    credentials: true
   }))
   
   .get('/', () => ({ status: 'MMDA Live Scraper Engine Active 🔥' }))
 
   .group('/api', (subApp) => 
     subApp.get('/alerts', async () => {
-      // Execute the live data fetch directly upon client request
       const liveAlerts = await fetchLiveMMDAAlerts()
-      
       return {
         success: true,
         count: liveAlerts.length,

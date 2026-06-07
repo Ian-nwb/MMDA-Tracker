@@ -9,6 +9,7 @@
     "@elysiajs/cors": "^1.4.2",
     "axios": "^1.17.0",
     "elysia": "latest",
+    "rss-parser": "^3.13.0",
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
