@@ -16,6 +16,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'MMDA Metro Alert Tracker',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: AppScrollBehavior(),
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF0B0C10),
@@ -30,6 +31,15 @@ class MyApp extends StatelessWidget {
   }
 }
 
+class AppScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+      };
+}
+
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -39,16 +49,24 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final ApiService _apiService = ApiService();
+  final TextEditingController _searchController = TextEditingController();
   
   List<TrafficAlert> _alerts = [];
   bool _isLoading = true;
   String? _errorMessage;
   String _selectedFilter = 'all';
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     _fetchDashboardData();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchDashboardData() async {
@@ -242,6 +260,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(width: 8),
             _buildStatPill('LIGHT', lightCount.toString(), const Color(0xFF00FF87), Icons.check_circle_outline_rounded, 'light'),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.03),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.08),
+              width: 1.0,
+            ),
+          ),
+          child: TextField(
+            controller: _searchController,
+            onChanged: (value) {
+              setState(() {
+                _searchQuery = value.toLowerCase();
+              });
+            },
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: 'Search by location or keywords...',
+              hintStyle: TextStyle(
+                color: Colors.white.withValues(alpha: 0.3),
+                fontSize: 14,
+              ),
+              prefixIcon: Icon(
+                Icons.search_rounded,
+                color: Colors.white.withValues(alpha: 0.4),
+                size: 20,
+              ),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: Icon(
+                        Icons.clear_rounded,
+                        color: Colors.white.withValues(alpha: 0.4),
+                        size: 18,
+                      ),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() {
+                          _searchQuery = '';
+                        });
+                      },
+                    )
+                  : null,
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            ),
+          ),
         ),
       ),
     );
@@ -463,7 +538,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'No traffic incidents match the "${_selectedFilter.toUpperCase()}" filter.',
+                  _searchQuery.isNotEmpty
+                      ? 'No traffic alerts matched your query "$_searchQuery".'
+                      : 'No traffic incidents match the "${_selectedFilter.toUpperCase()}" filter.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.6),
@@ -474,12 +551,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 24),
                 ElevatedButton.icon(
                   onPressed: () {
+                    _searchController.clear();
                     setState(() {
                       _selectedFilter = 'all';
+                      _searchQuery = '';
                     });
                   },
                   icon: const Icon(Icons.clear_rounded, size: 18),
-                  label: const Text('Reset Filter'),
+                  label: const Text('Reset Search & Filters'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white.withValues(alpha: 0.05),
                     foregroundColor: Colors.white,
@@ -500,6 +579,248 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  void _showAlertDetailSheet(TrafficAlert alert) {
+    final statusColor = _getStatusColor(alert.status);
+    final statusIcon = _getStatusIcon(alert.status);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      isScrollControlled: true,
+      builder: (context) {
+        return ClipRRect(
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
+          ),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.85,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF161925).withValues(alpha: 0.85),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(24),
+                  topRight: Radius.circular(24),
+                ),
+                border: Border(
+                  top: BorderSide(color: statusColor.withValues(alpha: 0.3), width: 2),
+                  left: BorderSide(color: Colors.white.withValues(alpha: 0.08), width: 1.5),
+                  right: BorderSide(color: Colors.white.withValues(alpha: 0.08), width: 1.5),
+                ),
+              ),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: statusColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                              color: statusColor.withValues(alpha: 0.4),
+                              width: 1.5,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(statusIcon, color: statusColor, size: 16),
+                              const SizedBox(width: 8),
+                              Text(
+                                alert.status.toUpperCase(),
+                                style: TextStyle(
+                                  color: statusColor,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.0,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          alert.timeAgo,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.4),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      alert.location,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      alert.message,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        color: Color(0xFFE2E8F0),
+                        height: 1.6,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Divider(color: Colors.white.withValues(alpha: 0.08)),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'SAFETY RECOMMENDED GUIDELINES',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white70,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.02),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.05),
+                          width: 1,
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          _buildGuidelineRow(
+                            Icons.alt_route_rounded,
+                            'Rerouting Advice',
+                            'Drivers are strongly recommended to take alternative access corridors to bypass this zone.',
+                          ),
+                          const SizedBox(height: 14),
+                          _buildGuidelineRow(
+                            Icons.speed_rounded,
+                            'Adjust Speeds',
+                            'Expect tailbacks and slow-moving traffic. Maintain active braking clearance.',
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.check_circle_outline_rounded),
+                            label: const Text('Acknowledge'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF00FF87).withValues(alpha: 0.15),
+                              foregroundColor: const Color(0xFF00FF87),
+                              surfaceTintColor: Colors.transparent,
+                              shadowColor: Colors.transparent,
+                              side: const BorderSide(color: Color(0xFF00FF87), width: 1),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        IconButton(
+                          onPressed: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: const Text('Alert details copied.'),
+                                backgroundColor: const Color(0xFF161925).withValues(alpha: 0.9),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.share_rounded, color: Colors.white70),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.white.withValues(alpha: 0.05),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.08),
+                              ),
+                            ),
+                            padding: const EdgeInsets.all(14),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildGuidelineRow(IconData icon, String title, String body) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.03),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: const Color(0xFFFF9F43), size: 18),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                body,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.6),
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -539,109 +860,122 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ],
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => _showAlertDetailSheet(alert),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Text(
-                            alert.location,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: statusColor.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(24),
-                            border: Border.all(
-                              color: statusColor.withValues(alpha: 0.4),
-                              width: 1.5,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: statusColor.withValues(alpha: 0.2),
-                                blurRadius: 8,
-                                spreadRadius: 1,
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(statusIcon, color: statusColor, size: 14),
-                              const SizedBox(width: 6),
-                              Text(
-                                alert.status.toUpperCase(),
-                                style: TextStyle(
-                                  color: statusColor,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 1.0,
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                alert.location,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  letterSpacing: 0.5,
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      alert.message,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Color(0xFFCBD5E1),
-                        height: 1.6,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Container(
-                      height: 1,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            Colors.white.withValues(alpha: 0.1),
-                            Colors.white.withValues(alpha: 0.01),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.access_time_rounded, size: 14, color: Colors.white.withValues(alpha: 0.4)),
-                            const SizedBox(width: 6),
-                            Text(
-                              alert.timeAgo,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.white.withValues(alpha: 0.4),
+                            ),
+                            const SizedBox(width: 12),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: statusColor.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(
+                                  color: statusColor.withValues(alpha: 0.4),
+                                  width: 1.5,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: statusColor.withValues(alpha: 0.2),
+                                    blurRadius: 8,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(statusIcon, color: statusColor, size: 14),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    alert.status.toUpperCase(),
+                                    style: TextStyle(
+                                      color: statusColor,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1.0,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
                         ),
-                        Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 12,
-                          color: Colors.white.withValues(alpha: 0.2),
+                        const SizedBox(height: 14),
+                        Text(
+                          alert.message,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Color(0xFFCBD5E1),
+                            height: 1.6,
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        Container(
+                          height: 1,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.white.withValues(alpha: 0.1),
+                                Colors.white.withValues(alpha: 0.01),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.access_time_rounded,
+                                  size: 14,
+                                  color: Colors.white.withValues(alpha: 0.4),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  alert.timeAgo,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white.withValues(alpha: 0.4),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              size: 12,
+                              color: Colors.white.withValues(alpha: 0.2),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -653,9 +987,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final filteredAlerts = _selectedFilter == 'all'
-        ? _alerts
-        : _alerts.where((a) => a.status.toLowerCase() == _selectedFilter).toList();
+    final filteredAlerts = _alerts.where((alert) {
+      final matchesCategory = _selectedFilter == 'all' ||
+          alert.status.toLowerCase() == _selectedFilter;
+      final matchesSearch = _searchQuery.isEmpty ||
+          alert.location.toLowerCase().contains(_searchQuery) ||
+          alert.message.toLowerCase().contains(_searchQuery);
+      return matchesCategory && matchesSearch;
+    }).toList();
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -682,7 +1021,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _buildHeader(),
                   const SizedBox(height: 16),
                   _buildAnalyticsSummary(),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
+                  _buildSearchBar(),
+                  const SizedBox(height: 16),
                   Expanded(
                     child: _isLoading
                         ? _buildLoadingState()
