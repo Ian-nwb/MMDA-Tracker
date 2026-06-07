@@ -30,7 +30,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  dio: ^5.7.0     # The industry standard for handling HTTP requests/API calls
+  dio: ^5.9.2     # The industry standard for handling HTTP requests/API calls
   intl: ^0.19.0   # To format messy time strings into readable Manila time
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
