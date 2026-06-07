@@ -5,7 +5,7 @@ import 'package:mmda_tracker/features/alerts/data/alert_model.dart';
 class ApiService {
   final Dio _dio = Dio(
     BaseOptions(
-      baseUrl: 'http://localhost:3000/api', 
+      baseUrl: 'https://mmda-tracker.vercel.app/api', 
       connectTimeout: const Duration(seconds: 5),
       receiveTimeout: const Duration(seconds: 5),
     ),
