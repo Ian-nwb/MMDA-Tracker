@@ -18,17 +18,17 @@ let isFetching = false
 let scraperInterval: any = null
 
 // ---------------------------------------------------------------------------
-// FIX 1: Nitter mirror cascade — tries each in order, uses the first that works
+// Nitter mirror cascade — tries each in order, uses the first that works
 // ---------------------------------------------------------------------------
 const MMDA_RSS_MIRRORS = [
   'https://rsshub.app/twitter/user/MMDA',   // RSSHub — most reliable, actively maintained
   'https://nitter.net/MMDA/rss',             // nitter.net — primary fallback
-  'https://nitter.cz/MMDA/rss',             // Czech mirror — secondary fallback
-  'https://nitter.privacydev.net/MMDA/rss', // Original (kept last, most unstable)
+  'https://nitter.cz/MMDA/rss',              // Czech mirror — secondary fallback
+  'https://nitter.privacydev.net/MMDA/rss',  // Original (kept last, most unstable)
 ]
 
 // ---------------------------------------------------------------------------
-// FIX 2: Waze public bounding-box endpoint — the real public-facing API
+// Waze public bounding-box endpoint — the real public-facing API
 // ---------------------------------------------------------------------------
 const WAZE_LIVE_URL = 'https://www.waze.com/row-rtserver/web/TGeoRSS'
 
@@ -101,21 +101,15 @@ export async function updateAlertsCache() {
 }
 
 /**
- * Core scraping orchestrator: queries Waze bounding-box API and RSS mirrors,
- * falling back to dynamic generation if both external services return nothing.
+ * Helper to fetch and parse Waze alerts with a safe timeout limit.
  */
-async function scrapeAlerts(): Promise<RawTrafficAlert[]> {
-  const aggregatedAlerts: RawTrafficAlert[] = []
-
-  // -------------------------------------------------------------------------
-  // SOURCE 1: WAZE PUBLIC LIVE-MAP BOUNDING BOX API
-  // Uses the same endpoint as the Waze browser client — no auth required.
-  // -------------------------------------------------------------------------
+async function fetchWazeAlerts(): Promise<RawTrafficAlert[]> {
+  const alertsList: RawTrafficAlert[] = []
   try {
     const wazeResponse = await axios.get(WAZE_LIVE_URL, {
       params: WAZE_PARAMS,
       headers: WAZE_HEADERS,
-      timeout: 6000,
+      timeout: 4000, // Strict 4s timeout to avoid function hangs
     })
 
     const alerts: any[] = wazeResponse.data?.alerts || []
@@ -126,7 +120,7 @@ async function scrapeAlerts(): Promise<RawTrafficAlert[]> {
       const description = alert.reportDescription || alert.subtype || 'Traffic incident reported.'
       const street = alert.street || alert.city || 'Metro Manila'
 
-      aggregatedAlerts.push({
+      alertsList.push({
         id: `waze-alert-${alert.uuid || Math.random()}`,
         location: `📍 Waze: ${street}`,
         message: description,
@@ -142,7 +136,7 @@ async function scrapeAlerts(): Promise<RawTrafficAlert[]> {
       const speedKmh = jam.speedKMH ? `${jam.speedKMH.toFixed(0)} km/h` : 'slow speed'
       const delay = jam.delay ? `${Math.round(jam.delay / 60)} min delay` : ''
 
-      aggregatedAlerts.push({
+      alertsList.push({
         id: `waze-jam-${index}-${Date.now()}`,
         location: `📍 Waze: ${street}`,
         message: `Traffic jam — ${speedKmh}${delay ? `, ${delay}` : ''}. ${jam.causeAlert ? `Cause: ${jam.causeAlert}.` : ''}`.trim(),
@@ -156,7 +150,6 @@ async function scrapeAlerts(): Promise<RawTrafficAlert[]> {
       console.log(`✅ [Scraper] Waze: ${alerts.length} alerts, ${jams.length} jam segments`)
     }
   } catch (e: any) {
-    // Log the actual HTTP error or timeout reason for easier debugging
     const reason = e?.response?.status
       ? `HTTP ${e.response.status}`
       : e?.code === 'ECONNABORTED'
@@ -164,12 +157,57 @@ async function scrapeAlerts(): Promise<RawTrafficAlert[]> {
       : 'Unreachable'
     console.warn(`⚠️ [Scraper] Waze stream failed (${reason}) — skipping.`)
   }
+  return alertsList
+}
 
-  // -------------------------------------------------------------------------
-  // SOURCE 2: MMDA OFFICIAL X/TWITTER FEED via RSS mirror cascade
-  // Tries each mirror URL in order, uses the first that returns items.
-  // -------------------------------------------------------------------------
-  const mmdaFeed = await fetchMMDAFeedWithFallback()
+/**
+ * Mirror cascade helper — iterates MMDA_RSS_MIRRORS using axios with a strict 2.5s timeout.
+ */
+async function fetchMMDAFeedWithFallback() {
+  for (const url of MMDA_RSS_MIRRORS) {
+    try {
+      console.log(`[Scraper] Fetching RSS feed from mirror: ${url}`)
+      const response = await axios.get(url, {
+        timeout: 2500, // Strict 2.5s timeout to prevent Serverless function hangs
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'application/xml, text/xml, */*'
+        }
+      })
+
+      const xmlString = response.data
+      if (typeof xmlString === 'string' && xmlString.trim().length > 0) {
+        const feed = await rssParser.parseString(xmlString)
+        if (feed.items && feed.items.length > 0) {
+          console.log(`✅ [Scraper] MMDA RSS feed loaded and parsed from: ${url}`)
+          return feed
+        }
+      }
+      console.log(`⚠️ [Scraper] Mirror returned empty or invalid XML: ${url}`)
+    } catch (e: any) {
+      const errorMsg = e?.code === 'ECONNABORTED' ? 'Timeout (2.5s)' : (e?.message ?? 'Unknown error')
+      console.warn(`⚠️ [Scraper] Mirror failed (${url}): ${errorMsg}`)
+    }
+  }
+
+  console.error('❌ [Scraper] All MMDA RSS mirrors exhausted — no feed available.')
+  return null
+}
+
+/**
+ * Core scraping orchestrator: queries Waze bounding-box API and RSS mirrors concurrently.
+ */
+async function scrapeAlerts(): Promise<RawTrafficAlert[]> {
+  console.log('[Scraper] Beginning scraping sequence...')
+  const startTime = Date.now()
+
+  // Fetch live sources concurrently in parallel
+  const [wazeAlerts, mmdaFeed] = await Promise.all([
+    fetchWazeAlerts(),
+    fetchMMDAFeedWithFallback()
+  ])
+
+  const aggregatedAlerts: RawTrafficAlert[] = [...wazeAlerts]
 
   if (mmdaFeed) {
     const todayString = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' })
@@ -198,10 +236,9 @@ async function scrapeAlerts(): Promise<RawTrafficAlert[]> {
     })
   }
 
-  // -------------------------------------------------------------------------
-  // SOURCE 3: FALLBACK — dynamic local mock generator
-  // Only triggers if both live sources returned nothing.
-  // -------------------------------------------------------------------------
+  console.log(`[Scraper] Scrape sequence finished in ${Date.now() - startTime}ms. Count: ${aggregatedAlerts.length}`)
+
+  // Fallback if both external sources are empty
   if (aggregatedAlerts.length === 0) {
     console.log('[Scraper] All external sources empty — using dynamic local fallback.')
     return getDynamicLocalAlerts()
@@ -211,27 +248,6 @@ async function scrapeAlerts(): Promise<RawTrafficAlert[]> {
   return aggregatedAlerts.sort(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   )
-}
-
-// ---------------------------------------------------------------------------
-// FIX 3: Mirror cascade helper — iterates MMDA_RSS_MIRRORS until one works
-// ---------------------------------------------------------------------------
-async function fetchMMDAFeedWithFallback() {
-  for (const url of MMDA_RSS_MIRRORS) {
-    try {
-      const feed = await rssParser.parseURL(url)
-      if (feed.items && feed.items.length > 0) {
-        console.log(`✅ [Scraper] MMDA RSS feed loaded from: ${url}`)
-        return feed
-      }
-      console.log(`⚠️ [Scraper] Mirror returned 0 items: ${url}`)
-    } catch (e: any) {
-      console.warn(`⚠️ [Scraper] Mirror failed (${url}): ${e?.message ?? 'Unknown error'}`)
-    }
-  }
-
-  console.error('❌ [Scraper] All MMDA RSS mirrors exhausted — no feed available.')
-  return null
 }
 
 // ---------------------------------------------------------------------------
