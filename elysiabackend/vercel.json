@@ -1,18 +1,6 @@
 {
   "version": 2,
-  "providers": {
-    "bun": "bun"
-  },
-  "builds": [
-    {
-      "src": "api/index.ts",
-      "use": "@vercel/bun"
-    }
-  ],
   "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "api/index.ts"
-    }
+    { "source": "/(.*)", "destination": "/api/index.ts" }
   ]
 }
