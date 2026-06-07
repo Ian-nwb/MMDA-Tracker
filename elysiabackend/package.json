@@ -7,9 +7,12 @@
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.2",
-    "elysia": "latest"
+    "axios": "^1.17.0",
+    "elysia": "latest",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
+    "@types/xml2js": "^0.4.14",
     "bun-types": "latest"
   },
   "module": "src/index.js"
