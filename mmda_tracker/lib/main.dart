@@ -43,6 +43,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<TrafficAlert> _alerts = [];
   bool _isLoading = true;
   String? _errorMessage;
+  String _selectedFilter = 'all';
 
   @override
   void initState() {
@@ -149,55 +150,70 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildStatPill(String label, String count, Color color, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: color.withValues(alpha: 0.15),
-          width: 1,
+  Widget _buildStatPill(String label, String count, Color color, IconData icon, String filterKey) {
+    final isSelected = _selectedFilter == filterKey;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedFilter = filterKey;
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: 0.15) : color.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected ? color : color.withValues(alpha: 0.15),
+            width: isSelected ? 1.8 : 1.0,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: isSelected ? color.withValues(alpha: 0.25) : Colors.transparent,
+              blurRadius: isSelected ? 8 : 0,
+              spreadRadius: isSelected ? 1 : 0,
+            ),
+          ],
         ),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.02),
-            blurRadius: 4,
-            spreadRadius: 1,
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: color, size: 14),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.6),
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.8,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? color : color.withValues(alpha: 0.7),
+              size: 14,
             ),
-          ),
-          const SizedBox(width: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              count,
+            const SizedBox(width: 8),
+            Text(
+              label,
               style: TextStyle(
-                color: color,
+                color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.5),
                 fontSize: 11,
-                fontWeight: FontWeight.w900,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                letterSpacing: 0.8,
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 10),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: isSelected ? color.withValues(alpha: 0.25) : color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                count,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : color.withValues(alpha: 0.8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -216,15 +232,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
         padding: const EdgeInsets.symmetric(vertical: 8.0),
         child: Row(
           children: [
-            _buildStatPill('ALL', totalCount.toString(), Colors.white, Icons.dashboard_rounded),
+            _buildStatPill('ALL', totalCount.toString(), Colors.white, Icons.dashboard_rounded, 'all'),
             const SizedBox(width: 8),
-            _buildStatPill('FLOODED', floodedCount.toString(), const Color(0xFF00E5FF), Icons.tsunami_rounded),
+            _buildStatPill('FLOODED', floodedCount.toString(), const Color(0xFF00E5FF), Icons.tsunami_rounded, 'flooded'),
             const SizedBox(width: 8),
-            _buildStatPill('HEAVY', heavyCount.toString(), const Color(0xFFFF3366), Icons.warning_amber_rounded),
+            _buildStatPill('HEAVY', heavyCount.toString(), const Color(0xFFFF3366), Icons.warning_amber_rounded, 'heavy'),
             const SizedBox(width: 8),
-            _buildStatPill('MODERATE', moderateCount.toString(), const Color(0xFFFF9F43), Icons.report_problem_rounded),
+            _buildStatPill('MODERATE', moderateCount.toString(), const Color(0xFFFF9F43), Icons.report_problem_rounded, 'moderate'),
             const SizedBox(width: 8),
-            _buildStatPill('LIGHT', lightCount.toString(), const Color(0xFF00FF87), Icons.check_circle_outline_rounded),
+            _buildStatPill('LIGHT', lightCount.toString(), const Color(0xFF00FF87), Icons.check_circle_outline_rounded, 'light'),
           ],
         ),
       ),
@@ -411,6 +427,82 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildFilteredEmptyState() {
+    return Center(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            padding: const EdgeInsets.all(32),
+            constraints: const BoxConstraints(maxWidth: 400),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.03),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.08),
+                width: 1.5,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.filter_list_off_rounded,
+                  size: 48,
+                  color: Colors.white.withValues(alpha: 0.4),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'No Results',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'No traffic incidents match the "${_selectedFilter.toUpperCase()}" filter.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _selectedFilter = 'all';
+                    });
+                  },
+                  icon: const Icon(Icons.clear_rounded, size: 18),
+                  label: const Text('Reset Filter'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.05),
+                    foregroundColor: Colors.white,
+                    surfaceTintColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                    side: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.1),
+                      width: 1,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildAlertCard(TrafficAlert alert, int index) {
     final statusColor = _getStatusColor(alert.status);
     final statusIcon = _getStatusIcon(alert.status);
@@ -561,6 +653,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final filteredAlerts = _selectedFilter == 'all'
+        ? _alerts
+        : _alerts.where((a) => a.status.toLowerCase() == _selectedFilter).toList();
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
@@ -594,21 +690,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ? _buildErrorState()
                             : _alerts.isEmpty
                                 ? _buildEmptyState()
-                                : RefreshIndicator(
-                                    onRefresh: _fetchDashboardData,
-                                    color: const Color(0xFF00FF87),
-                                    backgroundColor: const Color(0xFF0B0C10),
-                                    child: ListView.builder(
-                                      physics: const AlwaysScrollableScrollPhysics(
-                                        parent: BouncingScrollPhysics(),
+                                : filteredAlerts.isEmpty
+                                    ? _buildFilteredEmptyState()
+                                    : RefreshIndicator(
+                                        onRefresh: _fetchDashboardData,
+                                        color: const Color(0xFF00FF87),
+                                        backgroundColor: const Color(0xFF0B0C10),
+                                        child: ListView.builder(
+                                          physics: const AlwaysScrollableScrollPhysics(
+                                            parent: BouncingScrollPhysics(),
+                                          ),
+                                          padding: const EdgeInsets.only(bottom: 32),
+                                          itemCount: filteredAlerts.length,
+                                          itemBuilder: (context, index) {
+                                            return _buildAlertCard(filteredAlerts[index], index);
+                                          },
+                                        ),
                                       ),
-                                      padding: const EdgeInsets.only(bottom: 32),
-                                      itemCount: _alerts.length,
-                                      itemBuilder: (context, index) {
-                                        return _buildAlertCard(_alerts[index], index);
-                                      },
-                                    ),
-                                  ),
                   ),
                 ],
               ),
