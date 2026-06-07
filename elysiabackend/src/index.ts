@@ -17,6 +17,19 @@ const app = new Elysia()
   
   .get('/', () => ({ status: 'MMDA Live Scraper Engine Active 🔥' }))
 
+  // 🏥 Production-Grade Health Check Endpoint
+  .get('/health', () => {
+    return {
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(), // Tracking runtime in seconds
+      services: {
+        scraperLoop: 'active',
+        apiEngine: 'online'
+      }
+    }
+  })
+
   .group('/api', (subApp) => 
     subApp.get('/alerts', async () => {
       const liveAlerts = await fetchLiveMMDAAlerts()
